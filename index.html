@@ -1,0 +1,1208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Site Analysis – Qom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dosis:wght@400;500;600;700&display=swap">
+<style>
+  :root { --ink: #151515; --coral: #EE6A4F; --bg: #FDFDFD; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+  body { font-family: 'Dosis', sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; user-select: none; }
+  #stage { position: absolute; left: 50%; top: 50%; width: min(100vw, 80vh); height: min(125vw, 100vh);
+           transform: translate(-50%, -50%); background: var(--bg); overflow: hidden; }
+  #stage > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; font-family: 'Dosis', sans-serif; }
+  #ui { position: absolute; top: 2%; right: 2.4%; display: flex; gap: 8px; z-index: 2; transition: opacity .35s; }
+  #ui button { width: 34px; height: 34px; padding: 0; border-radius: 50%; border: 1px solid rgba(21,21,21,.2);
+               background: rgba(253,253,253,.9); color: var(--ink); display: grid; place-items: center; cursor: pointer;
+               transition: border-color .2s; }
+  #ui button:hover { border-color: rgba(21,21,21,.55); }
+  #ui button:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }
+  #ui svg { width: 16px; height: 16px; display: block; }
+  body.noui #ui { opacity: 0; pointer-events: none; }
+  body.noui { cursor: none; }
+  #start { position: fixed; inset: 0; z-index: 5; background: var(--bg); display: flex; flex-direction: column;
+           align-items: center; justify-content: center; cursor: pointer; transition: opacity .45s; }
+  #start.gone { opacity: 0; pointer-events: none; }
+  #start .t { font-size: 34px; font-weight: 600; letter-spacing: .02em; }
+  #start .s { font-size: 15px; color: #777; margin-top: 4px; }
+  #start .play { width: 64px; height: 64px; border-radius: 50%; background: var(--coral); display: grid; place-items: center;
+                 margin: 30px 0 14px; transition: transform .25s; }
+  #start:hover .play { transform: scale(1.06); }
+  #start .c { font-size: 18px; font-weight: 600; }
+  #start .h { font-size: 13px; color: #999; margin-top: 6px; }
+  #start:focus-visible { outline: none; }
+  #start:focus-visible .play { outline: 2px solid var(--ink); outline-offset: 4px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <svg id="svg" viewBox="0 0 720 900" preserveAspectRatio="xMidYMid meet" aria-label="Isometric site analysis animation"></svg>
+  <div id="ui">
+    <button id="btnReplay" type="button" title="Replay (R)" aria-label="Replay">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8a5.5 5.5 0 1 0 1.7-4"/><path d="M2.6 1.8v3h3"/></svg>
+    </button>
+    <button id="btnMute" type="button" title="Mute (M) · Hide controls (H)" aria-label="Mute">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h2.5L8 3v10L4.5 10H2z" fill="currentColor" stroke="none"/><path id="icoWave" d="M10.5 5.5a3.5 3.5 0 0 1 0 5M12.5 3.5a6.3 6.3 0 0 1 0 9"/><path id="icoX" d="M10.5 6l4 4M14.5 6l-4 4" style="display:none"/></svg>
+    </button>
+  </div>
+</div>
+<div id="start" role="button" tabindex="0" aria-label="Click to start">
+  <div class="t">Site Analysis</div>
+  <div class="s">Qom, Iran</div>
+  <div class="play"><svg width="22" height="22" viewBox="0 0 22 22"><path d="M7 4.5v13L18 11z" fill="#FDFDFD"/></svg></div>
+  <div class="c">Click to start</div>
+  <div class="h">30 s · sound on · press H to hide controls</div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* =====================================================================
+   0. Constants and small helpers
+   ===================================================================== */
+const W = 720, H = 900, DUR = 30;
+const INK = '#151515', CORAL = '#EE6A4F', BLUE = '#8DBDE3', BREEZE = '#E5573E', LIGHT = '#9E9E9E', BG = '#FDFDFD';
+const NS = 'http://www.w3.org/2000/svg';
+const C30 = Math.cos(Math.PI / 6), DEG = Math.PI / 180;
+
+const clamp = (x, a = 0, b = 1) => (x < a ? a : x > b ? b : x);
+const lerp = (a, b, t) => a + (b - a) * t;
+const prog = (t, a, b) => (b <= a ? (t >= a ? 1 : 0) : clamp((t - a) / (b - a)));
+const E = {
+  lin: t => t,
+  out: t => 1 - Math.pow(1 - t, 3),
+  in: t => t * t * t,
+  io: t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+  sine: t => -(Math.cos(Math.PI * t) - 1) / 2,
+  back: t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
+};
+const fadeIn = (T, a, d = 0.4, ease = E.io) => ease(prog(T, a, a + d));
+// Layer opacity: eases in at tStart, gets lighter after tEnd, optionally disappears at tGone.
+function residual(T, tStart, dIn, tEnd, lighter, tGone) {
+  let o = dIn > 0 ? fadeIn(T, tStart, dIn) : (T >= tStart ? 1 : 0);
+  if (T > tEnd) o *= lerp(1, lighter, E.io(prog(T, tEnd, tEnd + 0.6)));
+  if (tGone != null && T > tGone) o *= 1 - E.io(prog(T, tGone, tGone + 0.5));
+  return o;
+}
+function mixHex(a, b, t) {
+  const pa = [1, 3, 5].map(i => parseInt(a.substr(i, 2), 16)), pb = [1, 3, 5].map(i => parseInt(b.substr(i, 2), 16));
+  return '#' + pa.map((v, i) => Math.round(lerp(v, pb[i], t)).toString(16).padStart(2, '0')).join('');
+}
+function mulberry32(a) {
+  return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+// vectors / polygons (2D, metres)
+const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+const mul = (a, k) => [a[0] * k, a[1] * k];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+const len = a => Math.hypot(a[0], a[1]);
+const norm = a => mul(a, 1 / (len(a) || 1));
+function areaS(p) { let s = 0; for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length]; s += a[0] * b[1] - b[0] * a[1]; } return s / 2; }
+const ccw = p => (areaS(p) < 0 ? p.slice().reverse() : p);
+const centroid = p => mul(p.reduce((s, q) => add(s, q), [0, 0]), 1 / p.length);
+function perim(p) { let s = 0; for (let i = 0; i < p.length; i++) s += len(sub(p[(i + 1) % p.length], p[i])); return s; }
+function clipHP(poly, n, c) {            // keep the part where n·p <= c
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], da = dot(n, a) - c, db = dot(n, b) - c;
+    if (da <= 0) out.push(a);
+    if ((da < 0 && db > 0) || (da > 0 && db < 0)) { const t = da / (da - db); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); }
+  }
+  return out;
+}
+function clipConvex(poly, clip) {        // clip: convex, counter-clockwise
+  let out = poly;
+  for (let i = 0; i < clip.length && out.length > 2; i++) {
+    const a = clip[i], e = sub(clip[(i + 1) % clip.length], a), n = [e[1], -e[0]];
+    out = clipHP(out, n, dot(n, a));
+  }
+  return out;
+}
+function clipSeg(a, b, hps) {
+  let p = a, q = b;
+  for (const [n, c] of hps) {
+    const dp = dot(n, p) - c, dq = dot(n, q) - c;
+    if (dp > 0 && dq > 0) return null;
+    if (dp > 0) p = add(p, mul(sub(q, p), dp / (dp - dq)));
+    else if (dq > 0) q = add(p, mul(sub(q, p), dp / (dp - dq)));
+  }
+  return len(sub(q, p)) > 0.5 ? [p, q] : null;
+}
+function dedupe(p) {
+  const out = [];
+  for (const q of p) { const l = out[out.length - 1]; if (!l || len(sub(q, l)) > 0.25) out.push(q); }
+  while (out.length > 2 && len(sub(out[0], out[out.length - 1])) < 0.25) out.pop();
+  return out;
+}
+function hull(pts) {                     // monotone chain, counter-clockwise
+  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const q of p) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  up.pop(); lo.pop(); return lo.concat(up);
+}
+// Shadow footprint of a vertical prism: Minkowski sum of the footprint with the shadow vector.
+const sweep = (poly, s) => hull(poly.concat(poly.map(q => add(q, s))));
+function catmull(pts, seg = 12) {
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    for (let k = 0; k < seg; k++) {
+      const t = k / seg, t2 = t * t, t3 = t2 * t;
+      out.push([0, 1].map(j => 0.5 * (2 * p1[j] + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3)));
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
+// Polyline with arc-length, used for every line that "draws itself".
+class Line {
+  constructor(pts) {
+    this.p = pts; this.c = [0];
+    for (let i = 1; i < pts.length; i++) this.c.push(this.c[i - 1] + len(sub(pts[i], pts[i - 1])));
+    this.len = this.c[this.c.length - 1];
+  }
+  at(L) {
+    const c = this.c, p = this.p; let i = 1;
+    while (i < c.length - 1 && c[i] < L) i++;
+    const t = clamp((L - c[i - 1]) / ((c[i] - c[i - 1]) || 1));
+    return { pt: [lerp(p[i - 1][0], p[i][0], t), lerp(p[i - 1][1], p[i][1], t)], i, dir: norm(sub(p[i], p[i - 1])) };
+  }
+  part(f) {
+    const q = this.at(clamp(f) * this.len), pts = this.p.slice(0, q.i);
+    pts.push(q.pt);
+    return { d: pathOf(pts), tip: q.pt, dir: q.dir };
+  }
+}
+
+// SVG helpers. at() caches attribute values so unchanged attributes are never re-written.
+function mk(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function at(e, k, v) { const c = e._c || (e._c = {}); v = String(v); if (c[k] !== v) { c[k] = v; e.setAttribute(k, v); } }
+const r1 = n => Math.round(n * 10) / 10;
+function pathOf(pts, close) { let s = ''; for (let i = 0; i < pts.length; i++) s += (i ? 'L' : 'M') + r1(pts[i][0]) + ' ' + r1(pts[i][1]); return close ? s + 'Z' : s; }
+const op = v => clamp(v).toFixed(3);
+
+/* =====================================================================
+   1. Site data and the isometric frame
+   ===================================================================== */
+// Local plan coordinates in metres: x = east, y = north (corner B at the origin).
+const SITE = { B: [0, 0], C: [116, -17], A: [27, 39] };
+// Street frame: u runs along Ferdowsi Blvd (B → C, slightly south of east), v is perpendicular (north-ish).
+const ROT = Math.atan2(SITE.C[1], SITE.C[0]);
+const EU = [Math.cos(ROT), Math.sin(ROT)], EV = [-Math.sin(ROT), Math.cos(ROT)];
+const xy2uv = (x, y) => [x * EU[0] + y * EU[1], x * EV[0] + y * EV[1]];
+const sB = xy2uv(...SITE.B), sC = xy2uv(...SITE.C), sA = xy2uv(...SITE.A);
+const SITE_UV = [sB, sC, sA];
+const SITE_CEN = centroid(SITE_UV);
+const SITE_AREA = Math.abs(areaS(SITE_UV));
+
+// Camera: fixed 30° isometric view from the north-west (bearing ≈323°) looking south-east, so the
+// street frame axes land exactly on the ±30° iso axes and winter shadows fall towards the viewer.
+const DCAM = [-Math.SQRT1_2, Math.SQRT1_2];          // horizontal direction towards the camera (uv)
+const S = 1.76;                                       // px per metre
+let OX = 0, OY = 0;
+function P(u, v, z = 0) { return [OX + S * (u + v) * C30, OY + S * ((v - u) * 0.5 - z)]; }
+function iso(x, y, z = 0) { const q = xy2uv(x, y); return P(q[0], q[1], z); }
+const projPoly = (poly, z) => pathOf(poly.map(q => P(q[0], q[1], z)), true);
+
+// Model extents (street frame) and the cross-sections of the streets.
+const M = { U0: -50, U1: 174, V0: -62, V1: 94, T: 7 };
+const FER = { prop: 0, curbN: -5, laneN: -11, medN: -17, medS: -23, laneS: -29, curbS: -35, propS: -40, rowS: -58, treeN: -2.5, treeS: -37.5 };
+const DAN = { w: 135, e: 153, cw: 138, ce: 150 };
+const AL_E = norm(sub(sA, sC));                       // Danial 31 Alley direction (C → A, to the north-west)
+let AL_N = [AL_E[1], -AL_E[0]]; if (AL_N[1] < 0) AL_N = mul(AL_N, -1);   // across the alley, away from the site
+const alleyPt = (t, off) => add(sC, add(mul(AL_E, t), mul(AL_N, off)));
+const AB_D = norm(sub(sA, sB));
+let AB_N = [-AB_D[1], AB_D[0]]; if (dot(sub(sC, sB), AB_N) > 0) AB_N = mul(AB_N, -1);  // outward (west)
+const ALLEYS = [[0, 7], [39, 45], [77, 83]];          // offsets from the site edge AC: Danial 31 and the parallel alleys
+
+// Sun (latitude 34°36'33.74"N). Azimuth measured from north, clockwise.
+const LAT = (34 + 36 / 60 + 33.74 / 3600) * DEG;
+const DECL = { summer: 23.44, winter: -23.44 };
+function sunAt(declDeg, hDeg) {
+  const d = declDeg * DEG, h = hDeg * DEG;
+  const alt = Math.asin(Math.sin(LAT) * Math.sin(d) + Math.cos(LAT) * Math.cos(d) * Math.cos(h));
+  const az = Math.atan2(Math.sin(h), Math.cos(h) * Math.sin(LAT) - Math.tan(d) * Math.cos(LAT)) + Math.PI;
+  return { alt, az, h: hDeg };
+}
+const halfDay = d => Math.acos(-Math.tan(LAT) * Math.tan(d * DEG)) / DEG;
+const bearingUV = az => xy2uv(Math.sin(az), Math.cos(az));
+// Shadow offset per metre of height, in the street frame: length = 1 / tan(altitude).
+function shadowPerM(sun) { const k = 1 / Math.tan(Math.max(sun.alt, 2.5 * DEG)); return mul(bearingUV(sun.az), -k); }
+// Sun-path dome centred on the site (heights drawn 1.3× for legibility; shadows use the true altitude).
+const DOME = { R: 148, K: 1.36 };
+function domePt(sun) {
+  const h = bearingUV(sun.az), ca = Math.cos(sun.alt);
+  return P(SITE_CEN[0] + DOME.R * ca * h[0], SITE_CEN[1] + DOME.R * ca * h[1], DOME.R * DOME.K * Math.sin(sun.alt));
+}
+
+(function layout() {
+  const xs = [P(M.U0, M.V0)[0], P(M.U1, M.V1)[0]];
+  for (const d of [DECL.summer, DECL.winter]) { const h0 = halfDay(d); xs.push(domePt(sunAt(d, -h0))[0], domePt(sunAt(d, h0))[0]); }
+  OX = W / 2 - (Math.min(...xs) + Math.max(...xs)) / 2;
+  OY = 772 - P(M.U0, M.V1, -M.T)[1];
+})();
+
+/* =====================================================================
+   2. Procedural neighbourhood (seeded)
+   ===================================================================== */
+const rnd = mulberry32(20261019);
+const PLOTS = [];
+const HPS = {
+  slab: [[[-1, 0], -(M.U0 + 1.5)], [[1, 0], M.U1 - 1.5], [[0, -1], -(M.V0 + 1.5)], [[0, 1], M.V1 - 1.5]],
+  wDan: [[1, 0], DAN.w],
+  nFer: [[0, -1], -FER.prop],
+  wAB: [mul(AB_N, -1), dot(mul(AB_N, -1), sB)],
+  offMax: b => [AL_N, b + dot(sC, AL_N)],
+  vMin: v => [[0, -1], -v],
+};
+// One row of narrow plots (8–12 m frontage) along a street edge, clipped to its block.
+function row(o, e, n, offA, offB, tA, tB, hps, tag) {
+  const c = (t, off) => add(o, add(mul(e, t), mul(n, off)));
+  let t = tA;
+  while (t < tB - 1) {
+    let t2 = t + 8 + rnd() * 4; if (tB - t2 < 6) t2 = tB;
+    let poly = ccw([c(t, offA), c(t2, offA), c(t2, offB), c(t, offB)]);
+    for (const [hn, hc] of hps) { poly = clipHP(poly, hn, hc); if (poly.length < 3) break; }
+    poly = dedupe(poly);
+    if (poly.length >= 3) {
+      const ar = Math.abs(areaS(poly));
+      if (ar >= 45 && 2 * ar / perim(poly) >= 2.8) PLOTS.push({ poly: ccw(poly), tag });
+    }
+    t = t2;
+  }
+}
+row([0, 0], [1, 0], [0, 1], FER.rowS, FER.propS, M.U0 + 1.5, M.U1 - 1.5, HPS.slab, 'ferS');            // south of the boulevard
+row([0, 0], [0, 1], [1, 0], DAN.e, DAN.e + 18, FER.prop, M.V1 - 1.5, HPS.slab, 'danE');                 // east of Danial St.
+row([0, 0], [1, 0], [0, 1], FER.prop, 18, M.U0 + 1.5, 40, [...HPS.slab, HPS.wAB, HPS.offMax(0)], 'ferN'); // west block, boulevard frontage
+for (const [a, b] of [[-16, 0], [-32, -16], [-48, -32], [-64, -48]])                                   // west block, rows along the alley
+  row(sC, AL_E, AL_N, a, b, 60, 300, [...HPS.slab, HPS.wAB, HPS.vMin(18)], 'res');
+for (const [a, b] of [[7, 23], [23, 39], [45, 61], [61, 77], [83, 99], [99, 115]])                       // blocks between the alleys
+  row(sC, AL_E, AL_N, a, b, -45, 300, [...HPS.slab, HPS.wDan, HPS.nFer], 'blk');
+
+const BLD = PLOTS.map((p, i) => {
+  const us = p.poly.map(q => q[0]), vs = p.poly.map(q => q[1]), cen = centroid(p.poly);
+  const onFer = p.tag === 'ferS' || p.tag === 'ferN' || (p.tag === 'blk' && Math.min(...vs) < FER.prop + 0.8);
+  const onDan = ((p.tag === 'blk' && Math.max(...us) > DAN.w - 0.8) || p.tag === 'danE') && cen[1] < 48;
+  const r = rnd();
+  const floors = p.tag === 'ferS' ? (r < 0.45 ? 4 : 5) : (r < 0.17 ? 3 : r < 0.6 ? 4 : 5);
+  return { kind: 'b', id: i, poly: p.poly, cen, floors, h: floors * 3, use: onFer || onDan ? 'com' : 'res', hNow: 0, built: false };
+});
+// Neighbours appear staggered from the site outward.
+(() => {
+  const ds = BLD.map(b => len(sub(b.cen, SITE_CEN))), d0 = Math.min(...ds), d1 = Math.max(...ds);
+  BLD.forEach((b, i) => { b.appear = 20.12 + 1.4 * Math.pow((ds[i] - d0) / (d1 - d0), 0.85); });
+  BLD.forEach(b => { b.nb = BLD.filter(o => o !== b && len(sub(o.cen, b.cen)) < 80); });
+})();
+// Land use: commercial / service frontage sweeps from the west along Ferdowsi, then up Danial St.
+const COM = BLD.filter(b => b.use === 'com').sort((a, b) => (a.cen[0] + 0.7 * Math.max(0, a.cen[1])) - (b.cen[0] + 0.7 * Math.max(0, b.cen[1])));
+COM.forEach((b, i) => { b.useAt = 24.3 + 1.3 * i / Math.max(1, COM.length - 1); });
+
+// Tree lines on both sidewalks of Ferdowsi Blvd.
+const TREES = [];
+for (let u = M.U0 + 5; u <= M.U1 - 4; u += 8) {
+  if ((u > 115 && u < DAN.e + 3) || Math.abs(u - 80) < 3.5) continue;  // alley mouth, junction, pedestrian entrance
+  TREES.push({ kind: 't', pos: [u, FER.treeN], line: 'N' });
+}
+for (let u = M.U0 + 9; u <= M.U1 - 4; u += 8) TREES.push({ kind: 't', pos: [u, FER.treeS], line: 'S' });
+(() => {
+  const us = TREES.map(t => t.pos[0]), u0 = Math.min(...us), u1 = Math.max(...us);
+  TREES.forEach(t => {
+    t.appear = 26.6 + 1.15 * (t.pos[0] - u0) / (u1 - u0) + (t.line === 'S' ? 0.06 : 0);
+    t.poly = [[-1.3, -1.3], [1.3, -1.3], [1.3, 1.3], [-1.3, 1.3]].map(q => add(t.pos, q));
+    t.h = 8.5; t.s = 0;
+  });
+})();
+const TREE = { trunk: 3.2, zc: 5.4, r: 2.8 };
+
+// Painter's algorithm: footprint separating axes give a reliable "in front of" relation, then a
+// topological sort (ties broken by depth towards the camera).
+function sepOrder(pa, pb) {
+  const axes = [];
+  for (const p of [pa, pb]) for (let i = 0; i < p.length; i++) { const e = sub(p[(i + 1) % p.length], p[i]); axes.push(norm([e[1], -e[0]])); }
+  for (const n of axes) {
+    let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+    for (const q of pa) { const d = dot(n, q); if (d < a0) a0 = d; if (d > a1) a1 = d; }
+    for (const q of pb) { const d = dot(n, q); if (d < b0) b0 = d; if (d > b1) b1 = d; }
+    const dn = dot(n, DCAM);
+    if (Math.abs(dn) < 1e-3) continue;
+    if (a1 <= b0 + 0.08) return dn > 0 ? 1 : -1;      // b lies on the high side of n
+    if (b1 <= a0 + 0.08) return dn > 0 ? -1 : 1;
+  }
+  return 0;
+}
+function bbox(item) {
+  const pts = [];
+  for (const q of item.poly) { pts.push(P(q[0], q[1], 0)); pts.push(P(q[0], q[1], item.h + 3)); }
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+const DRAW_ORDER = (() => {
+  const items = BLD.concat(TREES);
+  items.forEach(it => { it.bb = bbox(it); it.depth = dot(centroid(it.poly), DCAM); });
+  const n = items.length, adj = items.map(() => []), indeg = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    const a = items[i].bb, b = items[j].bb;
+    if (a[2] < b[0] || b[2] < a[0] || a[3] < b[1] || b[3] < a[1]) continue;
+    const r = sepOrder(items[i].poly, items[j].poly);
+    if (r > 0) { adj[i].push(j); indeg[j]++; } else if (r < 0) { adj[j].push(i); indeg[i]++; }
+  }
+  const done = new Array(n).fill(false), out = [];
+  for (let k = 0; k < n; k++) {
+    let best = -1;
+    for (let i = 0; i < n; i++) if (!done[i] && indeg[i] === 0 && (best < 0 || items[i].depth < items[best].depth)) best = i;
+    if (best < 0) for (let i = 0; i < n; i++) if (!done[i] && (best < 0 || items[i].depth < items[best].depth)) best = i;
+    done[best] = true; out.push(items[best]);
+    for (const j of adj[best]) indeg[j]--;
+  }
+  return out;
+})();
+
+/* =====================================================================
+   3. Timing data shared by visuals and sound (single source of truth)
+   ===================================================================== */
+const SLAB_T = { lines: [[2.05, 2.7], [2.4, 3.0], [2.75, 3.35], [3.0, 3.55], [3.3, 3.6], [3.4, 3.7], [3.5, 3.8], [3.55, 3.95], [3.65, 4.05]], thud: 4.25 };
+const AREA_T = { edges: [[4.6, 5.05], [5.05, 5.5], [5.5, 5.95]], fill: 5.8, pinA: 5.85, pinLand: 6.2, label: 6.1 };
+const ACC_T = { ped: [7.15, 7.75], veh: [8.15, 9.2], pedLabel: 7.55, vehLabel: 8.85, fer: 7.3, dan: 7.55, alley: 8.4 };
+const SUN_T = { sumDraw: [10.05, 10.85], sumLabel: 10.55, sumTravel: [10.85, 12.35], winDraw: [12.15, 12.75], winLabel: 12.5,
+                winTravel: [12.75, 14.3], ew: 10.4, sweepIn: 21.95, sweep: [22.35, 23.95], h1: -30, h2: 45 };
+const WIND_T = { blue: [14.6, 14.85, 15.05, 15.3], breeze: [15.65, 15.9], dur: 1.3, labelBlue: 15.45, labelBreeze: 16.3 };
+const NOISE_T = { pulses: [17.6, 18.05, 18.5, 18.95, 19.4], life: 1.4, label: 17.75, quiet: 18.4, emit: [14, 58, 102], v: FER.laneN };
+
+// The sun as a pure function of timeline time (also drives shadows and the chime pitch).
+function sunState(T) {
+  const travel = (decl, w) => sunAt(decl, lerp(-halfDay(decl), halfDay(decl), E.sine(prog(T, w[0], w[1]))));
+  const edge = w => Math.min(prog(T, w[0], w[0] + 0.12), 1 - prog(T, w[1] - 0.15, w[1]));
+  const altFade = sun => E.sine(prog(sun.alt / DEG, 3, 10));
+  for (const [decl, w] of [[DECL.summer, SUN_T.sumTravel], [DECL.winter, SUN_T.winTravel]]) {
+    if (T >= w[0] && T <= w[1]) { const sun = travel(decl, w); return { sun, dot: edge(w), sh: altFade(sun) * edge(w) }; }
+  }
+  if (T >= SUN_T.sweepIn) {
+    const sun = sunAt(DECL.winter, lerp(SUN_T.h1, SUN_T.h2, E.io(prog(T, SUN_T.sweep[0], SUN_T.sweep[1]))));
+    const k = fadeIn(T, SUN_T.sweepIn, 0.45);
+    return { sun, dot: k, sh: k, sweep: true };
+  }
+  return null;
+}
+
+// Musical helpers: D major pentatonic (D E F# A B), index 0 = D4.
+const PENT = [0, 2, 4, 7, 9];
+const pent = i => 440 * Math.pow(2, (62 + 12 * Math.floor(i / 5) + PENT[((i % 5) + 5) % 5] - 69) / 12);
+const panX = x => clamp((x - W / 2) / (W / 2), -0.8, 0.8);
+
+// Building pops (throttled so dense waves stay soft), land-use chimes and tree bubbles.
+const POPS = (() => {
+  const r = mulberry32(77), out = []; let last = -1;
+  for (const b of BLD.slice().sort((a, c) => a.appear - c.appear)) {
+    if (b.appear - last < 0.055) continue;
+    last = b.appear;
+    out.push({ t: b.appear, f: pent(3 + Math.floor(r() * 7)), pan: panX(P(b.cen[0], b.cen[1])[0]) });
+  }
+  return out;
+})();
+const USE_CHIMES = (() => { const out = []; let last = -1, k = 0; for (const b of COM) { if (b.useAt - last < 0.1) continue; last = b.useAt; out.push({ t: b.useAt, f: pent(5 + (k++ % 6)), pan: panX(P(b.cen[0], b.cen[1])[0]) }); } return out; })();
+const BUBBLES = (() => { const out = []; let last = -1, k = 0; for (const t of TREES.slice().sort((a, b) => a.appear - b.appear)) { if (t.appear - last < 0.07) continue; last = t.appear; out.push({ t: t.appear, f: pent(3 + (k++ % 9)), pan: panX(P(t.pos[0], t.pos[1])[0]) }); } return out; })();
+
+/* =====================================================================
+   4. SVG scene
+   ===================================================================== */
+const svg = document.getElementById('svg');
+const defs = mk('defs', null, svg);
+mk('rect', { x: 0, y: 0, width: W, height: H, fill: BG }, svg);
+const SLAB_POLY = [[M.U0, M.V0], [M.U1, M.V0], [M.U1, M.V1], [M.U0, M.V1]];
+mk('path', { d: projPoly(SLAB_POLY, 0) }, mk('clipPath', { id: 'clipSlab' }, defs));
+const L = {};
+for (const name of ['lowSh', 'slab', 'ground', 'site', 'topSh', 'rings', 'gAnn', 'bld', 'air', 'lab', 'hud', 'end'])
+  L[name] = mk('g', { id: 'L-' + name }, svg);
+L.topSh.setAttribute('clip-path', 'url(#clipSlab)');
+L.rings.setAttribute('clip-path', 'url(#clipSlab)');
+const txt = (parent, s, attrs) => { const e = mk('text', Object.assign({ fill: INK, 'font-size': 13, 'font-weight': 500 }, attrs), parent); e.textContent = s; return e; };
+const dl = (parent, attrs) => mk('path', Object.assign({ fill: 'none', stroke: INK, 'stroke-width': 1, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, attrs), parent);
+
+// --- shadows (lower plane = table under the slab, top = slab surface)
+const lowShPath = mk('path', { fill: '#000' }, L.lowSh);
+const topShPath = mk('path', { fill: '#000' }, L.topSh);
+
+// --- slab
+const Pk = { P1: [M.U0, M.V0], P2: [M.U1, M.V0], P3: [M.U1, M.V1], P4: [M.U0, M.V1] };
+const pz = (q, z = 0) => P(q[0], q[1], z);
+const SLAB_FACES = mk('g', { opacity: 0 }, L.slab);
+mk('path', { d: pathOf([pz(Pk.P1), pz(Pk.P4), pz(Pk.P4, -M.T), pz(Pk.P1, -M.T)], true), fill: '#FFFFFF' }, SLAB_FACES);
+mk('path', { d: pathOf([pz(Pk.P4), pz(Pk.P3), pz(Pk.P3, -M.T), pz(Pk.P4, -M.T)], true), fill: '#FFFFFF' }, SLAB_FACES);
+mk('path', { d: projPoly(SLAB_POLY, 0), fill: '#FFFFFF' }, SLAB_FACES);
+const SLAB_LINES = [
+  [pz(Pk.P1), pz(Pk.P2)], [pz(Pk.P2), pz(Pk.P3)], [pz(Pk.P3), pz(Pk.P4)], [pz(Pk.P4), pz(Pk.P1)],
+  [pz(Pk.P1), pz(Pk.P1, -M.T)], [pz(Pk.P4), pz(Pk.P4, -M.T)], [pz(Pk.P3), pz(Pk.P3, -M.T)],
+  [pz(Pk.P1, -M.T), pz(Pk.P4, -M.T)], [pz(Pk.P4, -M.T), pz(Pk.P3, -M.T)],
+].map((pts, i) => ({ line: new Line(pts), el: dl(L.slab, { 'stroke-width': 1.25 }), a: SLAB_T.lines[i][0], b: SLAB_T.lines[i][1] }));
+
+// --- streets drawn on the slab
+const RECT = [[[-1, 0], -M.U0], [[1, 0], M.U1], [[0, -1], -M.V0], [[0, 1], M.V1]];
+const GROUND_LINES = [];
+const seg = (a, b, o = 0.55, extra = []) => { const s = clipSeg(a, b, RECT.concat(extra)); if (s) GROUND_LINES.push({ uv: s, o }); };
+seg([M.U0, FER.prop], [0, FER.prop], 0.35); seg([DAN.e, FER.prop], [M.U1, FER.prop], 0.35);
+seg([M.U0, FER.curbN], [DAN.cw, FER.curbN]); seg([DAN.ce, FER.curbN], [M.U1, FER.curbN]);
+seg([M.U0, FER.medN], [DAN.w - 2, FER.medN]); seg([M.U0, FER.medS], [DAN.w - 2, FER.medS]); seg([DAN.w - 2, FER.medN], [DAN.w - 2, FER.medS]);
+seg([DAN.e + 2, FER.medN], [M.U1, FER.medN]); seg([DAN.e + 2, FER.medS], [M.U1, FER.medS]); seg([DAN.e + 2, FER.medN], [DAN.e + 2, FER.medS]);
+seg([M.U0, FER.curbS], [M.U1, FER.curbS]); seg([M.U0, FER.propS], [M.U1, FER.propS], 0.35);
+seg([DAN.cw, FER.curbN], [DAN.cw, M.V1]); seg([DAN.ce, FER.curbN], [DAN.ce, M.V1]);
+seg(alleyPt(-60, 7), alleyPt(330, 7), 0.42, [[[1, 0], DAN.w], [[0, -1], 0]]);
+seg(sA, alleyPt(330, 0), 0.42);
+for (const [a, b] of ALLEYS.slice(1)) for (const off of [a, b]) seg(alleyPt(-60, off), alleyPt(330, off), 0.42, [[[1, 0], DAN.w]]);
+GROUND_LINES.forEach((g, i) => {
+  g.line = new Line([P(g.uv[0][0], g.uv[0][1]), P(g.uv[1][0], g.uv[1][1])]);
+  g.el = dl(L.ground, { 'stroke-width': 0.8, opacity: g.o });
+  g.a = 3.0 + 0.6 * i / GROUND_LINES.length; g.b = g.a + 0.55;
+});
+const LANES = mk('path', {
+  d: [[[M.U0, FER.laneN], [M.U1, FER.laneN]], [[M.U0, FER.laneS], [20, FER.laneS]], [[108, FER.laneS], [M.U1, FER.laneS]]]
+    .map(s => pathOf(s.map(q => P(q[0], q[1])))).join(''),
+  fill: 'none', stroke: INK, 'stroke-width': 0.7, 'stroke-dasharray': '4 5', opacity: 0 }, L.ground);
+
+// --- site area
+const SITE_FILL = mk('path', { d: projPoly(SITE_UV, 0), fill: CORAL, 'fill-opacity': 0 }, L.site);
+const SITE_G = mk('g', null, L.gAnn);
+const SITE_EDGES = [[sB, sC], [sC, sA], [sA, sB]].map((e, i) => ({
+  line: new Line(e.map(q => P(q[0], q[1]))), el: dl(SITE_G, { 'stroke-width': 1.35, 'stroke-dasharray': '5 3.5', 'stroke-linecap': 'butt' }),
+  a: AREA_T.edges[i][0], b: AREA_T.edges[i][1],
+}));
+
+// --- access arrows (flat ribbons on the ground)
+function ribbonPath(line, Lc, w, hl, hw) {
+  if (Lc <= 0.05) return '';
+  const head = Math.min(hl, Lc * 0.6), shaftEnd = Lc - head, l = [], r = [];
+  const push = (pt, dir, half) => { const n = [-dir[1], dir[0]]; l.push(add(pt, mul(n, half))); r.push(add(pt, mul(n, -half))); };
+  push(line.p[0], line.at(0.01).dir, w / 2);
+  for (let i = 1; i < line.p.length && line.c[i] < shaftEnd; i++) push(line.p[i], line.at(line.c[i]).dir, w / 2);
+  const base = line.at(shaftEnd);
+  push(base.pt, base.dir, w / 2);
+  const hwNow = hw * head / hl, n = [-base.dir[1], base.dir[0]], tip = line.at(Lc).pt;
+  const poly = l.concat([add(base.pt, mul(n, hwNow / 2)), tip, add(base.pt, mul(n, -hwNow / 2))], r.reverse());
+  return pathOf(poly.map(q => P(q[0], q[1])), true);
+}
+const ACC_G = mk('g', null, L.gAnn);
+const PED_LINE = new Line([[80, -13], [80, 9]]);
+const VEH_LINE = new Line(catmull([[146.5, 32], [146, 16], [141, 4], [130, -0.5], [121, 2.8], alleyPt(14, 3.5), alleyPt(24, 3.2), alleyPt(29.5, -1.5), alleyPt(30.5, -9)], 10));
+const PED_EL = mk('path', { fill: CORAL }, ACC_G);
+const VEH_EL = mk('path', { fill: CORAL }, ACC_G);
+
+// --- ground labels (text lying on the street surface)
+function groundText(parent, s, cUV, dirUV, size) {
+  let d = norm(dirUV);
+  const sv = q => [S * (q[0] + q[1]) * C30, S * (q[1] - q[0]) * 0.5];
+  if (sv(d)[0] < 0) d = mul(d, -1);
+  let n = [-d[1], d[0]];
+  const a = sv(d); let c = sv(n);
+  if (a[0] * c[1] - a[1] * c[0] < 0) { n = mul(n, -1); c = sv(n); }
+  const o = P(cUV[0], cUV[1]);
+  return txt(parent, s, { transform: `matrix(${a[0].toFixed(4)} ${a[1].toFixed(4)} ${c[0].toFixed(4)} ${c[1].toFixed(4)} ${o[0].toFixed(1)} ${o[1].toFixed(1)})`,
+    'font-size': size, 'text-anchor': 'middle', dy: '0.36em', fill: '#2A2A2A', 'font-weight': 600, 'letter-spacing': size * 0.06, opacity: 0,
+    stroke: BG, 'stroke-width': size * 0.16, 'stroke-linejoin': 'round', 'paint-order': 'stroke' });
+}
+const GT = {
+  fer: groundText(L.gAnn, 'Ferdowsi Blvd', [62, FER.laneS], [1, 0], 6.6),
+  dan: groundText(L.gAnn, 'Danial St.', [144, 62], [0, 1], 5.6),
+  alley: groundText(L.gAnn, 'Danial 31 Alley', alleyPt(74, 3.5), AL_E, 4.6),
+};
+
+// --- buildings and trees, in painter's order
+function prismPaths(poly, h) {
+  const top = poly.map(q => P(q[0], q[1], h)), bot = poly.map(q => P(q[0], q[1], 0));
+  let face = '', wire = pathOf(bot, true) + pathOf(top, true);
+  for (let i = 0; i < poly.length; i++) {
+    const j = (i + 1) % poly.length, e = sub(poly[j], poly[i]);
+    if (dot([e[1], -e[0]], DCAM) > 1e-6) face += pathOf([bot[i], bot[j], top[j], top[i]], true);
+    wire += pathOf([bot[i], top[i]]);
+  }
+  return { face: face + pathOf(top, true), wire };
+}
+for (const it of DRAW_ORDER) {
+  it.g = mk('g', { visibility: 'hidden' }, L.bld);
+  if (it.kind === 'b') {
+    it.wire = mk('path', { fill: 'none', stroke: INK, 'stroke-width': 0.7, opacity: 0 }, it.g);
+    it.face = mk('path', { fill: '#FFFFFF', 'fill-opacity': 0, stroke: INK, 'stroke-width': 1, 'stroke-linejoin': 'round' }, it.g);
+    it.rsh = mk('path', { fill: '#000' }, it.g);
+  } else {
+    it.trunk = mk('line', { stroke: INK, 'stroke-width': 1, 'stroke-linecap': 'round' }, it.g);
+    it.crown = mk('circle', { fill: CORAL, stroke: INK, 'stroke-width': 0.9, r: 0 }, it.g);
+  }
+}
+
+// --- pin
+const PIN = { at: P(SITE_CEN[0], SITE_CEN[1]) };
+PIN.g = mk('g', { opacity: 0 }, L.air);
+PIN.sh = mk('ellipse', { cx: PIN.at[0], cy: PIN.at[1], rx: 0, ry: 0, fill: '#000' }, PIN.g);
+PIN.body = mk('g', null, PIN.g);
+mk('path', { d: 'M0 0C-1.6-5-7.5-9.5-7.5-15.5A7.5 7.5 0 1 1 7.5-15.5C7.5-9.5 1.6-5 0 0Z', fill: INK }, PIN.body);
+mk('circle', { cx: 0, cy: -15.5, r: 2.9, fill: BG }, PIN.body);
+
+// --- leader labels (outside the model, joined by a thin leader)
+function leader(o) {
+  const g = mk('g', { opacity: 0 }, L.lab), dir = o.side === 'left' ? -1 : 1, color = o.color || INK;
+  const end = [o.pos[0] - dir * 5, o.pos[1]], knee = [end[0] - dir * 14, end[1]];
+  const lb = { g, line: new Line([o.anchor, knee, end]) };
+  lb.path = dl(g, { stroke: o.lineColor || '#444', 'stroke-width': 0.8 });
+  lb.dot = mk('circle', { cx: o.anchor[0], cy: o.anchor[1], r: 2.1, fill: o.dotColor || '#444', opacity: 0 }, g);
+  lb.text = txt(g, o.text, { x: o.pos[0], y: o.pos[1], dy: '0.34em', 'text-anchor': dir > 0 ? 'start' : 'end', 'font-size': o.size || 13.5, fill: color, opacity: 0 });
+  return lb;
+}
+function updLeader(lb, T, start, lightAt, lighter, goneAt) {
+  drawSolid(lb.path, lb.line, E.io(prog(T, start, start + 0.45)));
+  at(lb.dot, 'opacity', op(fadeIn(T, start, 0.15)));
+  at(lb.text, 'opacity', op(fadeIn(T, start + 0.25, 0.35)));
+  at(lb.g, 'opacity', op(residual(T, start, 0, lightAt, lighter, goneAt)));
+}
+const pedAnchor = P(80, -8), vehAnchor = P(...alleyPt(20, 3.4)), cornerP1 = P(M.U0, M.V0), cornerP3 = P(M.U1, M.V1);
+const LB = {
+  area: leader({ text: `Site area ≈ ${Math.round(SITE_AREA / 10) * 10 >= 1000 ? (Math.round(SITE_AREA / 10) * 10).toLocaleString('en-US') : Math.round(SITE_AREA)} m²`,
+                 anchor: P(66, 18), pos: [cornerP3[0] - 128, cornerP3[1] + 118] }),
+  ped: leader({ text: 'Pedestrian Entrance', anchor: pedAnchor, pos: [cornerP1[0] + 62, cornerP1[1] - 168], side: 'left' }),
+  veh: leader({ text: 'Vehicle Access', anchor: vehAnchor, pos: [cornerP3[0] - 70, cornerP3[1] + 66] }),
+  noise: leader({ text: 'Traffic Noise', anchor: P(NOISE_T.emit[0], NOISE_T.v), pos: [cornerP1[0] + 34, cornerP1[1] - 96], side: 'left', dotColor: CORAL }),
+  quiet: leader({ text: 'Quiet Edge', anchor: P(...alleyPt(58, 3.5)), pos: [cornerP3[0] - 96, cornerP3[1] + 128], color: LIGHT, lineColor: '#B5B5B5', dotColor: '#B5B5B5' }),
+};
+
+// --- sun path
+const arcLine = decl => { const h0 = halfDay(decl), pts = []; for (let i = 0; i <= 140; i++) pts.push(domePt(sunAt(decl, lerp(-h0, h0, i / 140)))); return new Line(pts); };
+const SUN = { sumLine: arcLine(DECL.summer), winLine: arcLine(DECL.winter) };
+SUN.sumEl = dl(L.air, { 'stroke-width': 1.1, 'stroke-dasharray': '2.5 3.5', 'stroke-linecap': 'butt' });
+SUN.winEl = dl(L.air, { 'stroke-width': 1.1, 'stroke-dasharray': '2.5 3.5', 'stroke-linecap': 'butt' });
+const apex = decl => domePt(sunAt(decl, 0));
+SUN.sumLabel = txt(L.air, 'Summer Sun', { x: apex(DECL.summer)[0], y: apex(DECL.summer)[1] - 14, 'text-anchor': 'middle', opacity: 0 });
+SUN.winLabel = txt(L.air, 'Winter Sun', { x: apex(DECL.winter)[0], y: apex(DECL.winter)[1] - 14, 'text-anchor': 'middle', opacity: 0 });
+SUN.ew = mk('g', { opacity: 0 }, L.air);
+for (const [s, az] of [['E', 90 * DEG], ['W', 270 * DEG]]) {
+  const h = bearingUV(az), p = P(SITE_CEN[0] + DOME.R * h[0], SITE_CEN[1] + DOME.R * h[1]);
+  mk('circle', { cx: p[0], cy: p[1], r: 2.4, fill: INK }, SUN.ew);
+  txt(SUN.ew, s, { x: p[0], y: p[1] + 15, 'text-anchor': 'middle', 'font-size': 12.5, fill: '#444' });
+}
+SUN.dot = mk('circle', { r: 8.5, fill: CORAL, opacity: 0 }, L.air);
+SUN.time = txt(L.air, '', { 'font-size': 12.5, fill: '#555', opacity: 0 });
+
+// --- winds (wavy lines in the air)
+function windLine(start, ctrl, end, z0, z1, amp, wl) {
+  const N = 170, raw = [];
+  for (let i = 0; i <= N; i++) { const t = i / N; raw.push(add(add(mul(start, (1 - t) * (1 - t)), mul(ctrl, 2 * (1 - t) * t)), mul(end, t * t))); }
+  const pts = []; let s = 0;
+  for (let i = 0; i <= N; i++) {
+    if (i) s += len(sub(raw[i], raw[i - 1]));
+    const tg = norm(sub(raw[Math.min(N, i + 1)], raw[Math.max(0, i - 1)])), nn = [-tg[1], tg[0]];
+    const w = Math.sin(s / wl * 2 * Math.PI) * amp * Math.min(1, i / 14, (N - i) / 14);
+    const q = add(raw[i], mul(nn, w));
+    pts.push(P(q[0], q[1], lerp(z0, z1, i / N)));
+  }
+  return new Line(pts);
+}
+const WIND = [];
+(() => {
+  const c = SITE_CEN, tSE = bearingUV(135 * DEG), tE = bearingUV(90 * DEG), tSW = bearingUV(225 * DEG), tW = bearingUV(270 * DEG);
+  const pp = d => [-d[1], d[0]];
+  const straight = (dir, back, fwd, lat) => { const o = add(c, mul(pp(dir), lat)); return [add(o, mul(dir, -back)), o, add(o, mul(dir, fwd))]; };
+  const bend = (d1, d2, back, fwd, lat) => [add(add(c, mul(d1, -back)), mul(pp(d1), lat)), add(add(c, mul(d1, -12)), mul(pp(d1), lat)), add(add(c, mul(d2, fwd)), mul(pp(d2), lat * 0.6))];
+  const specs = [
+    { pts: straight(tSE, 182, 152, -30), z: [18, 24], color: BLUE, w: 1.7, a: WIND_T.blue[0] },
+    { pts: straight(tSE, 176, 150, 8), z: [24, 30], color: BLUE, w: 1.7, a: WIND_T.blue[1] },
+    { pts: bend(tE, tSE, 165, 150, -8), z: [16, 22], color: BLUE, w: 1.7, a: WIND_T.blue[2] },
+    { pts: bend(tE, tSE, 160, 140, 22), z: [22, 28], color: BLUE, w: 1.7, a: WIND_T.blue[3] },
+    { pts: straight(tSW, 172, 118, 0), z: [13, 16], color: BREEZE, w: 1.05, a: WIND_T.breeze[0], breeze: true },
+    { pts: bend(tW, tSW, 172, 112, 16), z: [17, 20], color: BREEZE, w: 1.05, a: WIND_T.breeze[1], breeze: true },
+  ];
+  for (const s of specs) {
+    const line = windLine(s.pts[0], s.pts[1], s.pts[2], s.z[0], s.z[1], s.breeze ? 2.6 : 3.4, s.breeze ? 18 : 26);
+    const g = mk('g', { opacity: 0 }, L.air);
+    WIND.push({ ...s, line, g, el: dl(g, { stroke: s.color, 'stroke-width': s.w }), head: dl(g, { stroke: s.color, 'stroke-width': s.w }) });
+  }
+})();
+const windStart = WIND[0].line.p[0], breezeStart = WIND[4].line.p[0];
+const WLAB = {
+  blue: txt(L.air, 'Prevailing wind · NW / W', { x: windStart[0] + 14, y: windStart[1] + 12, 'font-size': 12.5, fill: '#5E93BF', opacity: 0 }),
+  breeze: txt(L.air, 'Summer breeze · E / NE', { x: Math.min(W - 14, breezeStart[0] + 4), y: breezeStart[1] + 24, 'text-anchor': 'end', 'font-size': 12.5, fill: BREEZE, opacity: 0 }),
+};
+
+// --- noise rings
+const RINGS = [];
+for (const tp of NOISE_T.pulses) for (const u of NOISE_T.emit) {
+  const c = P(u, NOISE_T.v);
+  RINGS.push({ tp, el: mk('ellipse', { cx: c[0], cy: c[1], rx: 0, ry: 0, fill: 'none', stroke: CORAL, 'stroke-width': 1.3, opacity: 0 }, L.rings) });
+}
+
+// --- HUD: title, caption, north arrow, legend
+const TITLE = { g: mk('g', { opacity: 0 }, L.hud) };
+txt(TITLE.g, 'Site Analysis', { x: W / 2, y: 428, 'text-anchor': 'middle', 'font-size': 46, 'font-weight': 600, 'letter-spacing': 0.5 });
+TITLE.rule = mk('line', { x1: W / 2 - 16, x2: W / 2 + 16, y1: 450, y2: 450, stroke: CORAL, 'stroke-width': 2.2, 'stroke-linecap': 'round' }, TITLE.g);
+txt(TITLE.g, 'Qom, Iran – 34°36′33.7″N 50°52′16.2″E', { x: W / 2, y: 478, 'text-anchor': 'middle', 'font-size': 16.5, 'font-weight': 400, fill: '#666', 'letter-spacing': 0.3 });
+
+const NORTH = { g: mk('g', { opacity: 0 }, L.hud) };
+(() => {
+  const c = [56, 62], nd = norm(sub(iso(0, 1), iso(0, 0))), side = [-nd[1] * 3.6, nd[0] * 3.6];
+  mk('ellipse', { cx: c[0], cy: c[1], rx: 16 * 1.2247, ry: 16 * 0.7071, fill: 'none', stroke: INK, 'stroke-width': 0.9 }, NORTH.g);
+  const tip = add(c, mul(nd, 21)), tail = add(c, mul(nd, -12));
+  mk('path', { d: pathOf([tip, add(c, side), tail], true), fill: INK }, NORTH.g);
+  mk('path', { d: pathOf([tip, sub(c, side), tail], true), fill: BG, stroke: INK, 'stroke-width': 0.9, 'stroke-linejoin': 'round' }, NORTH.g);
+  const tp = add(c, mul(nd, 31));
+  txt(NORTH.g, 'N', { x: tp[0], y: tp[1], dy: '0.36em', 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 600 });
+})();
+
+const LEGEND = { g: mk('g', { opacity: 0 }, L.hud), rows: [] };
+(() => {
+  const x = 556, y = 318;
+  [['Residential', 'sq', '#FFFFFF'], ['Commercial / Service', 'sq', CORAL], ['Green', 'dot', CORAL]].forEach(([s, kind, fill], i) => {
+    const g = mk('g', { opacity: 0 }, LEGEND.g), yy = y + i * 22;
+    if (kind === 'sq') mk('rect', { x, y: yy - 6, width: 12, height: 12, fill, stroke: INK, 'stroke-width': 1 }, g);
+    else mk('circle', { cx: x + 6, cy: yy, r: 5, fill }, g);
+    txt(g, s, { x: x + 21, y: yy, dy: '0.34em', 'font-size': 13.5 });
+    LEGEND.rows.push(g);
+  });
+})();
+
+const CAPS = [];   // filled from the cue list below
+
+// --- end card
+const END = { g: mk('g', null, L.end) };
+END.wipe = mk('path', { fill: CORAL, d: '' }, END.g);
+END.items = [
+  txt(END.g, 'Site Analysis', { x: W / 2, y: 410, 'text-anchor': 'middle', 'font-size': 44, 'font-weight': 600, fill: '#2B1A15', opacity: 0, 'letter-spacing': 0.5 }),
+  txt(END.g, 'Eng. Elham Aram', { x: W / 2, y: 462, 'text-anchor': 'middle', 'font-size': 19, fill: '#2B1A15', opacity: 0 }),
+  txt(END.g, 'Hadis Rajabi', { x: W / 2, y: 490, 'text-anchor': 'middle', 'font-size': 19, fill: '#2B1A15', opacity: 0 }),
+  txt(END.g, 'Amin Shiee', { x: W / 2, y: 518, 'text-anchor': 'middle', 'font-size': 19, fill: '#2B1A15', opacity: 0 }),
+];
+END.rule = mk('line', { x1: W / 2 - 16, x2: W / 2 + 16, y1: 434, y2: 434, stroke: '#2B1A15', 'stroke-width': 1.6, 'stroke-linecap': 'round', opacity: 0 }, END.g);
+
+/* =====================================================================
+   5. Visual functions (pure functions of timeline time T)
+   ===================================================================== */
+// Solid lines draw themselves with stroke-dashoffset (pathLength = 1). Dashed lines (site edges, sun
+// arcs) cannot be revealed that way, so they grow as a partial path that keeps its dash pattern.
+function drawSolid(el, line, f) {
+  if (!el._dash) { el.setAttribute('d', pathOf(line.p)); el.setAttribute('pathLength', '1'); el.setAttribute('stroke-dasharray', '1 1'); el._dash = true; }
+  at(el, 'visibility', f > 0 ? 'visible' : 'hidden');
+  at(el, 'stroke-dashoffset', (1 - clamp(f)).toFixed(4));
+}
+const drawPart = (l, f) => at(l.el, 'd', f > 0 ? l.line.part(f).d : '');
+
+function vTitle(T) {
+  at(TITLE.g, 'opacity', op(fadeIn(T, 0.12, 0.75) * (1 - fadeIn(T, 1.55, 0.5))));
+  at(TITLE.g, 'transform', `translate(0 ${r1((1 - E.out(prog(T, 0.12, 1.05))) * 10)})`);
+  const k = E.out(prog(T, 0.45, 1.0)) * 16;
+  at(TITLE.rule, 'x1', r1(W / 2 - k)); at(TITLE.rule, 'x2', r1(W / 2 + k));
+}
+
+function vSite(T) {
+  at(SLAB_FACES, 'opacity', op(fadeIn(T, 3.2, 0.8)));
+  for (const l of SLAB_LINES) drawSolid(l.el, l.line, E.io(prog(T, l.a, l.b)));
+  for (const l of GROUND_LINES) drawSolid(l.el, l.line, E.io(prog(T, l.a, l.b)));
+  at(LANES, 'opacity', op(0.32 * fadeIn(T, 3.7, 0.5)));
+  at(NORTH.g, 'opacity', op(fadeIn(T, 2.3, 0.6)));
+}
+
+function vSiteArea(T) {
+  for (const e of SITE_EDGES) drawPart(e, E.sine(prog(T, e.a, e.b)));
+  at(SITE_FILL, 'fill-opacity', op(0.12 * fadeIn(T, AREA_T.fill, 0.6)));
+  at(SITE_G, 'opacity', op(residual(T, 0, 0, 7.0, 0.85)));
+  const k = prog(T, AREA_T.pinA, AREA_T.pinLand);
+  const bounce = T > AREA_T.pinLand ? Math.sin(prog(T, AREA_T.pinLand, AREA_T.pinLand + 0.22) * Math.PI) * 5 : 0;
+  at(PIN.body, 'transform', `translate(${r1(PIN.at[0])} ${r1(PIN.at[1] - (1 - E.in(k)) * 130 - bounce)})`);
+  at(PIN.sh, 'rx', r1(4.5 * E.out(k))); at(PIN.sh, 'ry', r1(2.2 * E.out(k)));
+  at(PIN.g, 'opacity', op(fadeIn(T, AREA_T.pinA, 0.1) * residual(T, 0, 0, 7.0, 0.3, 20.0)));
+  updLeader(LB.area, T, AREA_T.label, 7.0, 0.35, 10.0);
+}
+
+function vAccess(T) {
+  at(PED_EL, 'd', ribbonPath(PED_LINE, PED_LINE.len * E.io(prog(T, ...ACC_T.ped)), 2.4, 6, 7));
+  at(VEH_EL, 'd', ribbonPath(VEH_LINE, VEH_LINE.len * E.io(prog(T, ...ACC_T.veh)), 2.4, 6, 7));
+  at(ACC_G, 'opacity', op(residual(T, 0, 0, 10.0, 0.45)));
+  updLeader(LB.ped, T, ACC_T.pedLabel, 10.0, 0.35, 14.5);
+  updLeader(LB.veh, T, ACC_T.vehLabel, 10.0, 0.35, 14.5);
+  at(GT.fer, 'opacity', op(residual(T, ACC_T.fer, 0.5, 10.0, 0.6)));
+  // the neighbours hide most of Danial St. and the alley, so their names step back when the buildings rise
+  at(GT.dan, 'opacity', op(residual(T, ACC_T.dan, 0.5, 10.0, 0.6, 20.0)));
+  at(GT.alley, 'opacity', op(residual(T, ACC_T.alley, 0.5, 10.0, 0.6, 20.0)));
+}
+
+function vSun(T) {
+  at(SUN.sumEl, 'd', T > SUN_T.sumDraw[0] ? SUN.sumLine.part(E.io(prog(T, ...SUN_T.sumDraw))).d : '');
+  at(SUN.winEl, 'd', T > SUN_T.winDraw[0] ? SUN.winLine.part(E.io(prog(T, ...SUN_T.winDraw))).d : '');
+  at(SUN.sumEl, 'opacity', op(residual(T, 0, 0, 14.5, 0.25, 20.0)));
+  at(SUN.winEl, 'opacity', op(residual(T, 0, 0, 14.5, 0.25)));
+  at(SUN.sumLabel, 'opacity', op(residual(T, SUN_T.sumLabel, 0.4, 14.5, 0.35, 20.0)));
+  at(SUN.winLabel, 'opacity', op(residual(T, SUN_T.winLabel, 0.4, 14.5, 0.35, 20.0)));
+  at(SUN.ew, 'opacity', op(residual(T, SUN_T.ew, 0.5, 14.5, 0.4, 20.0)));
+  const st = sunState(T);
+  if (st && st.dot > 0.001) {
+    const p = domePt(st.sun);
+    at(SUN.dot, 'cx', r1(p[0])); at(SUN.dot, 'cy', r1(p[1])); at(SUN.dot, 'opacity', op(st.dot));
+    if (st.sweep) {
+      const mins = Math.round((12 + st.sun.h / 15) * 60 / 5) * 5;
+      const label = `Dec 21 · ${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+      if (SUN.time.textContent !== label) SUN.time.textContent = label;
+      at(SUN.time, 'x', r1(p[0] + 14)); at(SUN.time, 'y', r1(p[1] - 10));
+    }
+  } else at(SUN.dot, 'opacity', 0);
+  at(SUN.time, 'opacity', op(fadeIn(T, SUN_T.sweepIn + 0.1, 0.4) * (1 - fadeIn(T, 24.1, 0.5))));
+}
+
+function vWinds(T) {
+  for (const w of WIND) {
+    const f = E.io(prog(T, w.a, w.a + WIND_T.dur));
+    drawSolid(w.el, w.line, f);
+    if (f <= 0) at(w.head, 'd', '');
+    else {
+      const q = w.line.at(f * w.line.len), d = q.dir, n = [-d[1], d[0]], k = 6.5;
+      at(w.head, 'd', pathOf([add(q.pt, add(mul(d, -k), mul(n, k * 0.55))), q.pt, add(q.pt, add(mul(d, -k), mul(n, -k * 0.55)))]));
+    }
+    at(w.g, 'opacity', op(residual(T, w.a, 0.15, 17.5, 0.22, 20.0)));
+  }
+  at(WLAB.blue, 'opacity', op(residual(T, WIND_T.labelBlue, 0.4, 17.5, 0.35, 20.0)));
+  at(WLAB.breeze, 'opacity', op(residual(T, WIND_T.labelBreeze, 0.4, 17.5, 0.35, 20.0)));
+}
+
+function vNoise(T) {
+  for (const r of RINGS) {
+    const age = T - r.tp;
+    if (age < 0 || age > NOISE_T.life) { at(r.el, 'opacity', 0); continue; }
+    const k = age / NOISE_T.life, rad = lerp(3, 46, E.out(k));
+    at(r.el, 'rx', r1(rad * S * 1.2247)); at(r.el, 'ry', r1(rad * S * 0.7071));
+    at(r.el, 'opacity', op(Math.pow(1 - k, 1.3) * 0.95));
+  }
+  updLeader(LB.noise, T, NOISE_T.label, 20.0, 0.35, 20.0);
+  updLeader(LB.quiet, T, NOISE_T.quiet, 20.0, 0.35, 20.0);
+}
+
+let geomVersion = 0, treeVersion = 0;
+function vNeighbours(T) {
+  let changed = false;
+  for (const b of BLD) {
+    if (T < b.appear) {
+      at(b.g, 'visibility', 'hidden');
+      if (b.hNow !== 0) { b.hNow = 0; changed = true; }
+      continue;
+    }
+    at(b.g, 'visibility', 'visible');
+    const h = b.h * E.out(prog(T, b.appear, b.appear + 0.55));
+    if (!b.built || Math.abs(h - b.hNow) > 1e-3) {
+      const pp = prismPaths(b.poly, h);
+      at(b.face, 'd', pp.face); at(b.wire, 'd', pp.wire);
+      b.hNow = h; b.built = true; changed = true;
+    }
+    const fill = E.io(prog(T, b.appear + 0.32, b.appear + 0.78));
+    at(b.face, 'fill-opacity', op(fill));
+    at(b.wire, 'opacity', op(fadeIn(T, b.appear, 0.12) * (1 - fill)));
+  }
+  if (changed) geomVersion++;
+}
+
+function vLandUse(T) {
+  for (const b of COM) at(b.face, 'fill', mixHex('#FFFFFF', CORAL, E.io(prog(T, b.useAt, b.useAt + 0.35))));
+  at(LEGEND.g, 'opacity', 1);
+  LEGEND.rows.forEach((g, i) => at(g, 'opacity', op(fadeIn(T, 24.4 + i * 0.14, 0.4))));
+}
+
+function vTrees(T) {
+  for (const t of TREES) {
+    const k = prog(T, t.appear, t.appear + 0.32), s = k > 0 ? E.back(k) : 0;
+    at(t.g, 'visibility', k > 0 ? 'visible' : 'hidden');
+    if (s === t.s) continue;
+    t.s = s; treeVersion++;
+    const g = P(t.pos[0], t.pos[1], 0), z = TREE.zc * Math.min(1, s), c = P(t.pos[0], t.pos[1], z);
+    at(t.trunk, 'x1', r1(g[0])); at(t.trunk, 'y1', r1(g[1])); at(t.trunk, 'x2', r1(c[0])); at(t.trunk, 'y2', r1(c[1]));
+    at(t.crown, 'cx', r1(c[0])); at(t.crown, 'cy', r1(c[1])); at(t.crown, 'r', r1(Math.max(0, TREE.r * S * s)));
+  }
+}
+
+function vEnd(T) {
+  const k = E.io(prog(T, 28.0, 28.7)), slope = W * Math.tan(Math.PI / 6), y0 = lerp(H + slope + 12, -12, k);
+  at(END.wipe, 'd', k > 0 ? `M0 ${H + 20}L0 ${r1(y0)}L${W} ${r1(y0 - slope)}L${W} ${H + 20}Z` : '');
+  END.items.forEach((e, i) => {
+    const a = 28.55 + (i ? 0.25 + i * 0.2 : 0), f = fadeIn(T, a, 0.45);
+    at(e, 'opacity', op(f));
+    at(e, 'transform', `translate(0 ${r1((1 - E.out(prog(T, a, a + 0.6))) * 8)})`);
+  });
+  at(END.rule, 'opacity', op(fadeIn(T, 28.75, 0.4)));
+}
+
+function vCaptions(T) {
+  for (const c of CAPS) {
+    const a = c.cue.t, b = c.cue.end;
+    const o = fadeIn(T, a + 0.2, 0.4) * (1 - E.io(prog(T, b - 0.1, b + 0.2)));
+    at(c.el, 'opacity', op(o));
+    at(c.el, 'fill', mixHex(INK, '#BDBDBD', E.io(prog(T, b - 0.45, b - 0.12))));
+  }
+}
+
+// Shadows: building footprints swept along the sun vector on the slab, onto the table below the
+// slab, and onto lower roofs. Rebuilt only when the sun or any height changes.
+let lastShKey = '';
+function treeShadow(t, sv, sun) {
+  const s = Math.min(1, t.s), c = add(t.pos, mul(sv, TREE.zc * s)), a = norm(sv), n = [-a[1], a[0]];
+  const r = TREE.r * Math.max(0, t.s), stretch = 1 / Math.max(0.2, Math.sin(sun.alt)), pts = [];
+  for (let i = 0; i < 16; i++) { const th = i / 16 * 2 * Math.PI; pts.push(add(c, add(mul(a, Math.cos(th) * r * stretch), mul(n, Math.sin(th) * r)))); }
+  const tr = [add(t.pos, mul(n, 0.25)), add(t.pos, mul(n, -0.25)), add(add(t.pos, mul(sv, TREE.trunk * s)), mul(n, -0.25)), add(add(t.pos, mul(sv, TREE.trunk * s)), mul(n, 0.25))];
+  return projPoly(pts, 0) + projPoly(tr, 0);
+}
+function vShadows(T) {
+  const st = sunState(T), on = st ? st.sh : 0;
+  at(L.lowSh, 'opacity', op(on)); at(L.topSh, 'opacity', op(on));
+  if (on <= 0.001) return;
+  const key = st.sun.alt.toFixed(5) + ',' + st.sun.az.toFixed(5) + ',' + geomVersion + ',' + treeVersion;
+  if (key !== lastShKey) {
+    lastShKey = key;
+    const sv = shadowPerM(st.sun);
+    let low = projPoly(sweep(SLAB_POLY, mul(sv, M.T)), -M.T), top = '';
+    for (const b of BLD) if (b.hNow > 0.05) {
+      low += projPoly(sweep(b.poly, mul(sv, b.hNow + M.T)), -M.T);
+      top += projPoly(sweep(b.poly, mul(sv, b.hNow)), 0);
+    }
+    for (const t of TREES) if (t.s > 0) top += treeShadow(t, sv, st.sun);
+    at(lowShPath, 'd', low); at(topShPath, 'd', top);
+    for (const b of BLD) {
+      let d = '';
+      if (b.hNow > 0.05) for (const o of b.nb) {
+        if (o.hNow <= b.hNow + 0.05) continue;
+        const sh = clipConvex(sweep(o.poly, mul(sv, o.hNow - b.hNow)), b.poly);
+        if (sh.length > 2) d += projPoly(sh, b.hNow);
+      }
+      at(b.rsh, 'd', d);
+    }
+  }
+  for (const b of BLD) at(b.rsh, 'opacity', op(on));
+}
+
+/* =====================================================================
+   6. Sound (Web Audio only)
+   ===================================================================== */
+const AMB = 0.075;   // ambient bed ≈ -28 dB after the 0.6 master gain
+function makeIR(c, dur, decay) {
+  const n = Math.floor(c.sampleRate * dur), buf = c.createBuffer(2, n, c.sampleRate), r = mulberry32(7), fade = c.sampleRate * 0.01;
+  for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < n; i++) d[i] = (r() * 2 - 1) * Math.pow(1 - i / n, decay) * Math.min(1, i / fade) * 0.6; }
+  return buf;
+}
+function makeNoise(c, dur) {
+  const n = Math.floor(c.sampleRate * dur), buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0), r = mulberry32(11);
+  for (let i = 0; i < n; i++) d[i] = r() * 2 - 1;
+  return buf;
+}
+function buildAudio(c) {
+  const A = { c };
+  A.mute = c.createGain(); A.mute.connect(c.destination);
+  const lim = c.createDynamicsCompressor();
+  lim.threshold.value = -3; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.12; lim.connect(A.mute);
+  const comp = c.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.knee.value = 10; comp.ratio.value = 3; comp.attack.value = 0.008; comp.release.value = 0.3; comp.connect(lim);
+  A.master = c.createGain(); A.master.gain.value = 0.6; A.master.connect(comp);
+  A.verb = c.createConvolver(); A.verb.buffer = makeIR(c, 2.6, 3.2);
+  const vg = c.createGain(); vg.gain.value = 0.7; A.verb.connect(vg); vg.connect(A.master);
+  A.dly = c.createDelay(1.5); A.dly.delayTime.value = 0.36;
+  const fb = c.createGain(), dlp = c.createBiquadFilter(), dg = c.createGain();
+  fb.gain.value = 0.3; dlp.type = 'lowpass'; dlp.frequency.value = 2300; dg.gain.value = 0.5;
+  A.dly.connect(dlp); dlp.connect(fb); fb.connect(A.dly); dlp.connect(dg); dg.connect(A.master);
+  A.noise = makeNoise(c, 3);
+  return A;
+}
+function newRun(A, t0) {
+  const c = A.c, R = { A, c, t0, src: [], ducks: [], rnd: mulberry32(2024) };
+  R.dry = c.createGain(); R.dry.connect(A.master);
+  R.rev = c.createGain(); R.rev.connect(A.verb);
+  R.del = c.createGain(); R.del.connect(A.dly);
+  R.amb = c.createGain(); R.amb.gain.value = 0;
+  R.duck = c.createGain(); R.amb.connect(R.duck); R.duck.connect(R.dry);
+  const ar = c.createGain(); ar.gain.value = 0.3; R.duck.connect(ar); ar.connect(R.rev);
+  return R;
+}
+function killRun(R) {
+  const t = R.c.currentTime;
+  for (const g of [R.dry, R.rev, R.del]) { g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.linearRampToValueAtTime(0, t + 0.08); }
+  setTimeout(() => { for (const s of R.src) { try { s.stop(); } catch (e) { /* already stopped */ } } for (const g of [R.dry, R.rev, R.del]) g.disconnect(); }, 250);
+}
+function route(R, node, o) {
+  let n = node;
+  if (o.pan != null && R.c.createStereoPanner) {
+    const p = R.c.createStereoPanner(); p.pan.setValueAtTime(clamp(o.pan, -1, 1), o.t);
+    if (o.pan2 != null) p.pan.linearRampToValueAtTime(clamp(o.pan2, -1, 1), o.t + o.dur);
+    n.connect(p); n = p;
+  }
+  n.connect(R.dry);
+  if (o.rev) { const g = R.c.createGain(); g.gain.value = o.rev; n.connect(g); g.connect(R.rev); }
+  if (o.del) { const g = R.c.createGain(); g.gain.value = o.del; n.connect(g); g.connect(R.del); }
+}
+// Pitched voice with an exponential decay; parts = [[ratio, gain, decayFactor], ...].
+function tone(R, t, o) {
+  const c = R.c, a = o.a ?? 0.004, d = o.d ?? 0.3, g = o.g ?? 0.1;
+  const env = c.createGain();
+  env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(g, t + a); env.gain.exponentialRampToValueAtTime(0.0001, t + a + d);
+  let dst = env;
+  if (o.lp) { const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = o.lp; f.Q.value = 0.5; env.connect(f); dst = f; }
+  for (const [ratio, pg, dm] of (o.parts || [[1, 1, 1]])) {
+    const osc = c.createOscillator(); osc.type = o.type || 'sine';
+    const f0 = o.f * ratio;
+    if (o.from) { osc.frequency.setValueAtTime(f0 * o.from, t); osc.frequency.exponentialRampToValueAtTime(f0, t + (o.glide || 0.02)); }
+    else osc.frequency.setValueAtTime(f0, t);
+    if (o.detune) osc.detune.value = o.detune;
+    let node = osc;
+    if (pg !== 1 || dm !== 1) {
+      const pgN = c.createGain(); pgN.gain.setValueAtTime(pg, t);
+      if (dm !== 1) pgN.gain.exponentialRampToValueAtTime(Math.max(1e-4, pg * 0.001), t + a + d * dm);
+      osc.connect(pgN); node = pgN;
+    }
+    node.connect(env);
+    osc.start(t); osc.stop(t + a + d + 0.05); R.src.push(osc);
+  }
+  route(R, dst, Object.assign({}, o, { t, dur: a + d }));
+}
+// Filtered noise with a breakpoint envelope env = [[dt, gain], ...] (last point = 0 at dur).
+function hiss(R, t, o) {
+  const c = R.c, src = c.createBufferSource(), f = c.createBiquadFilter(), env = c.createGain();
+  src.buffer = R.A.noise; src.loop = true;
+  f.type = o.type || 'bandpass'; f.Q.value = o.Q ?? 0.8; f.frequency.setValueAtTime(o.f, t);
+  if (o.fpts) for (const [dt, fv] of o.fpts) f.frequency.linearRampToValueAtTime(fv, t + dt);
+  if (o.lfo) {
+    const l = c.createOscillator(), lg = c.createGain();
+    l.frequency.value = o.lfo[0]; lg.gain.value = o.lfo[1]; l.connect(lg); lg.connect(f.frequency);
+    l.start(t); l.stop(t + o.dur + 0.1); R.src.push(l);
+  }
+  env.gain.setValueAtTime(0, t);
+  for (const [dt, gv] of o.env) env.gain.linearRampToValueAtTime(gv, t + dt);
+  src.connect(f); f.connect(env);
+  src.start(t, R.rnd() * 2); src.stop(t + o.dur + 0.05); R.src.push(src);
+  route(R, env, Object.assign({}, o, { t }));
+}
+const duck = (R, t, d) => R.ducks.push([t, t + d]);
+function applyDucks(R) {
+  const m = [];
+  for (const x of R.ducks.sort((a, b) => a[0] - b[0])) { const l = m[m.length - 1]; if (l && x[0] <= l[1] + 0.15) l[1] = Math.max(l[1], x[1]); else m.push(x.slice()); }
+  const g = R.duck.gain; g.setValueAtTime(1, R.t0);
+  for (const [a, b] of m) { g.setTargetAtTime(0.72, a, 0.04); g.setTargetAtTime(1, b, 0.3); }
+}
+function ambient(R, t0) {
+  const c = R.c, end = t0 + DUR + 0.3;
+  const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 480; lp.Q.value = 0.6;
+  const lfo = c.createOscillator(), lg = c.createGain(); lfo.frequency.value = 0.055; lg.gain.value = 200;
+  lfo.connect(lg); lg.connect(lp.frequency); lfo.start(t0); lfo.stop(end); R.src.push(lfo);
+  for (const [f, type, det, g] of [[73.42, 'triangle', 0, 0.45], [73.42, 'sine', 8, 0.32], [110.0, 'sine', -6, 0.23]]) {
+    const o = c.createOscillator(), og = c.createGain();
+    o.type = type; o.frequency.value = f; o.detune.value = det; og.gain.value = g;
+    o.connect(og); og.connect(lp); o.start(t0); o.stop(end); R.src.push(o);
+  }
+  lp.connect(R.amb);
+  const air = c.createBufferSource(), bp = c.createBiquadFilter(), ag = c.createGain();
+  air.buffer = R.A.noise; air.loop = true; bp.type = 'bandpass'; bp.frequency.value = 2800; bp.Q.value = 0.5; ag.gain.value = 0.05;
+  air.connect(bp); bp.connect(ag); ag.connect(R.amb); air.start(t0); air.stop(end); R.src.push(air);
+  R.amb.gain.setValueAtTime(0, t0); R.amb.gain.linearRampToValueAtTime(AMB, t0 + 2.4);
+}
+
+function sTitle(R, t0) {
+  ambient(R, t0);
+  hiss(R, t0 + 0.02, { dur: 2.3, type: 'lowpass', f: 160, Q: 0.4, fpts: [[1.2, 900], [2.3, 300]], env: [[1.25, 0.11], [2.3, 0]], rev: 0.5 });
+  tone(R, t0 + 0.02, { f: 73.42, a: 1.15, d: 1.3, g: 0.12, rev: 0.25 });
+  tone(R, t0 + 0.62, { f: pent(0), type: 'triangle', a: 0.05, d: 2.6, g: 0.075, lp: 1500, rev: 0.6, del: 0.12 });
+  tone(R, t0 + 0.62, { f: pent(3), a: 0.07, d: 2.3, g: 0.045, rev: 0.6 });
+  tone(R, t0 + 0.62, { f: pent(-5), a: 0.1, d: 2.4, g: 0.06 });
+  duck(R, t0 + 0.6, 1.6);
+}
+function sSite(R, t0) {
+  const a = SLAB_T.lines[0][0], b = GROUND_LINES.length ? GROUND_LINES[GROUND_LINES.length - 1].b : 4.15;
+  for (let t = a + 0.01; t < b - 0.03; t += 0.028 + R.rnd() * 0.028) {
+    const g = 0.012 + R.rnd() * 0.022, d = 0.035 + R.rnd() * 0.04;
+    hiss(R, t0 + t, { dur: d, type: 'bandpass', f: 2600 + R.rnd() * 2600, Q: 1.1, env: [[0.006, g], [d, 0]], pan: (R.rnd() - 0.5) * 0.5 });
+  }
+  duck(R, t0 + a, b - a);
+  tone(R, t0 + SLAB_T.thud, { f: pent(-8), from: 1.9, glide: 0.09, a: 0.006, d: 0.42, g: 0.18 });   // A1
+  hiss(R, t0 + SLAB_T.thud, { dur: 0.12, type: 'lowpass', f: 380, Q: 0.6, env: [[0.005, 0.11], [0.12, 0]] });
+  duck(R, t0 + SLAB_T.thud, 0.4);
+}
+function sSiteArea(R, t0) {
+  AREA_T.edges.forEach(([, e], i) => {
+    tone(R, t0 + e, { f: pent(8 + i), type: 'triangle', a: 0.002, d: 0.08, g: 0.09, parts: [[1, 1, 1], [2.01, 0.3, 0.5]], rev: 0.25, pan: panX(SITE_EDGES[i].line.p[1][0]) });
+    duck(R, t0 + e, 0.2);
+  });
+  tone(R, t0 + AREA_T.pinLand, { f: pent(-2), from: 2.6, glide: 0.07, a: 0.003, d: 0.2, g: 0.2, rev: 0.35 });   // A3
+  duck(R, t0 + AREA_T.pinLand, 0.3);
+}
+function sAccess(R, t0) {
+  tone(R, t0 + ACC_T.ped[0] + 0.03, { f: pent(7), a: 0.006, d: 0.3, g: 0.13, parts: [[1, 1, 1], [2, 0.18, 0.5]], rev: 0.4, del: 0.18, pan: panX(pedAnchor[0]) });
+  tone(R, t0 + ACC_T.veh[0] + 0.03, { f: pent(3), a: 0.006, d: 0.34, g: 0.14, parts: [[1, 1, 1], [2, 0.18, 0.5]], rev: 0.4, del: 0.18, pan: panX(vehAnchor[0]) });
+  duck(R, t0 + ACC_T.ped[0], 0.4); duck(R, t0 + ACC_T.veh[0], 0.4);
+}
+function sSun(R, t0) {
+  for (const w of [SUN_T.sumTravel, SUN_T.winTravel]) {
+    for (let t = w[0] + 0.06; t < w[1] - 0.05; t += 0.14) {
+      const st = sunState(t); if (!st) continue;
+      const alt = st.sun.alt / DEG; if (alt < 1) continue;
+      tone(R, t0 + t, { f: pent(3 + Math.round(alt / 80 * 9)), a: 0.003, d: 0.9, g: 0.05, parts: [[1, 1, 1], [2.76, 0.22, 0.45], [5.4, 0.07, 0.25]], rev: 0.65, del: 0.15, pan: panX(domePt(st.sun)[0]) });
+    }
+    duck(R, t0 + w[0], w[1] - w[0]);
+  }
+}
+function sWinds(R, t0) {
+  const a = WIND_T.blue[0] - 0.05, b = WIND_T.breeze[0] - 0.05;
+  hiss(R, t0 + a, { dur: 17.45 - a, type: 'bandpass', f: 650, Q: 0.9, lfo: [0.42, 320], env: [[0.9, 0.2], [1.9, 0.15], [17.45 - a, 0]], pan: -0.75, pan2: 0.6, rev: 0.25 });
+  hiss(R, t0 + a, { dur: 17.45 - a, type: 'lowpass', f: 320, Q: 0.5, lfo: [0.3, 120], env: [[1.0, 0.13], [17.45 - a, 0]], pan: -0.5, pan2: 0.4 });
+  hiss(R, t0 + b, { dur: 17.35 - b, type: 'bandpass', f: 1900, Q: 1.6, lfo: [0.8, 500], env: [[0.7, 0.07], [17.35 - b, 0]], pan: 0.7, pan2: -0.55, rev: 0.3 });
+  duck(R, t0 + a, 17.45 - a);
+}
+function sNoise(R, t0) {
+  for (const tp of NOISE_T.pulses) {
+    tone(R, t0 + tp, { f: 73.42, a: 0.04, d: 0.55, g: 0.12, parts: [[1, 1, 1], [2, 0.25, 0.5]], lp: 500 });
+    hiss(R, t0 + tp, { dur: 0.16, type: 'lowpass', f: 260, Q: 0.7, env: [[0.02, 0.035], [0.16, 0]] });
+    duck(R, t0 + tp, 0.45);
+  }
+}
+function sNeighbours(R, t0) {
+  for (const p of POPS) {
+    tone(R, t0 + p.t, { f: p.f, from: 1.45, glide: 0.014, type: 'triangle', a: 0.002, d: 0.1, g: 0.075, pan: p.pan, rev: 0.15 });
+    hiss(R, t0 + p.t, { dur: 0.03, type: 'bandpass', f: 2600, Q: 2.5, env: [[0.002, 0.035], [0.03, 0]], pan: p.pan });
+    duck(R, t0 + p.t, 0.12);
+  }
+  const s = SUN_T.sweep[0] - 0.15, e = SUN_T.sweep[1] + 0.15;
+  hiss(R, t0 + s, { dur: e - s, type: 'lowpass', f: 200, Q: 0.6, fpts: [[(e - s) / 2, 680], [e - s, 260]], env: [[(e - s) / 2, 0.17], [e - s, 0]], pan: -0.5, pan2: 0.5, rev: 0.3 });
+  tone(R, t0 + s, { f: 73.42, a: 0.9, d: 1.2, g: 0.08 });
+  duck(R, t0 + s, e - s);
+}
+function sLandUse(R, t0) {
+  for (const ch of USE_CHIMES) {
+    tone(R, t0 + ch.t, { f: ch.f, a: 0.003, d: 0.65, g: 0.055, parts: [[1, 1, 1], [3.01, 0.12, 0.4]], rev: 0.55, del: 0.2, pan: ch.pan });
+    duck(R, t0 + ch.t, 0.3);
+  }
+}
+function sTrees(R, t0) {
+  for (const b of BUBBLES) {
+    tone(R, t0 + b.t, { f: b.f, from: 0.9, glide: 0.035, a: 0.002, d: 0.22, g: 0.07, parts: [[1, 1, 1], [3.93, 0.14, 0.3]], rev: 0.3, pan: b.pan });
+    duck(R, t0 + b.t, 0.15);
+  }
+}
+function sEnd(R, t0) {
+  R.amb.gain.setValueAtTime(AMB, t0 + 28.0); R.amb.gain.linearRampToValueAtTime(0, t0 + DUR);
+  for (const f of [pent(1), pent(3), pent(4)]) tone(R, t0 + 28.05, { f, type: 'triangle', a: 0.22, d: 0.55, g: 0.03, lp: 1500, rev: 0.5 });
+  for (const f of [pent(-5), pent(-2), pent(0), pent(2), pent(3), pent(5)])
+    tone(R, t0 + 28.42, { f, type: f < 200 ? 'sine' : 'triangle', a: 0.35, d: 1.2, g: f < 200 ? 0.07 : 0.035, lp: 1700, rev: 0.55, del: 0.1 });
+  duck(R, t0 + 28.05, 1.9);
+}
+
+/* =====================================================================
+   7. Cue list — the single source of truth for the 30 s timeline
+   ===================================================================== */
+const CUES = [
+  { t: 0.0,  stage: 'Title',                  caption: '',                       visual: vTitle,      sound: sTitle },
+  { t: 2.0,  stage: 'Site',                   caption: 'Site',                   visual: vSite,       sound: sSite },
+  { t: 4.5,  stage: 'Site Area',              caption: 'Site Area',              visual: vSiteArea,   sound: sSiteArea },
+  { t: 7.0,  stage: 'Access',                 caption: 'Access',                 visual: vAccess,     sound: sAccess },
+  { t: 10.0, stage: 'Sun Path',               caption: 'Sun Path',               visual: vSun,        sound: sSun },
+  { t: 14.5, stage: 'Winds',                  caption: 'Winds',                  visual: vWinds,      sound: sWinds },
+  { t: 17.5, stage: 'Noise',                  caption: 'Noise',                  visual: vNoise,      sound: sNoise },
+  { t: 20.0, stage: 'Neighbours and Shadows', caption: 'Neighbours and Shadows', visual: vNeighbours, sound: sNeighbours },
+  { t: 24.0, stage: 'Land Use',               caption: 'Land Use',               visual: vLandUse,    sound: sLandUse },
+  { t: 26.5, stage: 'Trees',                  caption: 'Trees',                  visual: vTrees,      sound: sTrees },
+  { t: 28.0, stage: 'End',                    caption: '',                       visual: vEnd,        sound: sEnd },
+];
+CUES.forEach((c, i) => { c.end = i + 1 < CUES.length ? CUES[i + 1].t : DUR; });
+for (const c of CUES) if (c.caption)
+  CAPS.push({ cue: c, el: txt(L.hud, c.caption, { x: W / 2, y: 858, 'text-anchor': 'middle', 'font-size': 22, 'font-weight': 600, opacity: 0, 'letter-spacing': 0.3 }) });
+
+function render(T) {
+  for (const c of CUES) c.visual(T, c);
+  vCaptions(T);
+  vShadows(T);
+}
+function schedule(R) { for (const c of CUES) c.sound(R, R.t0); applyDucks(R); }
+
+/* =====================================================================
+   8. Playback: AudioContext clock drives the visuals
+   ===================================================================== */
+let A = null, run = null, t0 = 0, lastT = 0, playing = false, muted = false;
+const startEl = document.getElementById('start');
+function clock() {
+  const c = A.c; let ct = c.currentTime;
+  if (c.getOutputTimestamp) {
+    const o = c.getOutputTimestamp();
+    if (o && o.contextTime > 0 && o.performanceTime > 0) ct = o.contextTime + Math.min(0.1, Math.max(0, performance.now() - o.performanceTime) / 1000);
+  } else ct -= (c.outputLatency || c.baseLatency || 0);
+  const T = Math.max(lastT, ct - t0);
+  lastT = T;
+  return clamp(T, 0, DUR);
+}
+function loop() {
+  if (!playing) return;
+  const T = clock();
+  render(T);
+  if (T >= DUR) { playing = false; return; }
+  requestAnimationFrame(loop);
+}
+function play() {
+  if (run) killRun(run);
+  t0 = A.c.currentTime + 0.12;
+  run = newRun(A, t0);
+  schedule(run);
+  lastT = 0; playing = true;
+  render(0);
+  requestAnimationFrame(loop);
+}
+async function start() {
+  if (!A) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    A = buildAudio(new Ctx({ latencyHint: 'interactive' }));
+    A.mute.gain.value = muted ? 0 : 1;
+  }
+  try { await A.c.resume(); } catch (e) { /* resume needs a gesture; we are inside one */ }
+  startEl.classList.add('gone');
+  startEl.blur();
+  play();
+}
+function setMute(m) {
+  muted = m;
+  if (A) { const g = A.mute.gain, t = A.c.currentTime; g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.setTargetAtTime(m ? 0 : 1, t, 0.08); }
+  document.getElementById('icoWave').style.display = m ? 'none' : '';
+  document.getElementById('icoX').style.display = m ? '' : 'none';
+  document.getElementById('btnMute').setAttribute('aria-label', m ? 'Unmute' : 'Mute');
+}
+startEl.addEventListener('click', start);
+startEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); start(); } });
+document.getElementById('btnReplay').addEventListener('click', () => { if (A) play(); else start(); });
+document.getElementById('btnMute').addEventListener('click', () => setMute(!muted));
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+  const k = e.key.toLowerCase();
+  if (k === 'h') document.body.classList.toggle('noui');
+  else if (k === 'm') setMute(!muted);
+  else if (k === 'r') { if (A) play(); }
+});
+
+// Static preview of a single frame without sound: open the file with #t=12.5
+const hashT = /(?:^|[#&])t=([\d.]+)/.exec(location.hash);
+if (hashT) { startEl.remove(); render(clamp(parseFloat(hashT[1]), 0, DUR)); }
+else render(0);
+
+// Debug hooks: frame rendering and an offline render of the full soundtrack for level checks.
+window.__site = {
+  render, CUES, count: { buildings: BLD.length, commercial: COM.length, trees: TREES.length, pops: POPS.length },
+  state: () => ({ T: lastT, playing, muted, ctx: A ? A.c.state : 'none' }),
+  async offline() {
+    const sr = 44100, oc = new OfflineAudioContext(2, Math.ceil(sr * (DUR + 0.6)), sr);
+    const eng = buildAudio(oc), R = newRun(eng, 0.05);
+    schedule(R);
+    const buf = await oc.startRendering(), Lc = buf.getChannelData(0), Rc = buf.getChannelData(1), win = Math.floor(sr * 0.25), rows = [];
+    let peak = 0;
+    for (let i = 0; i < Lc.length; i += win) {
+      let p = 0, s = 0, n = 0;
+      for (let j = i; j < Math.min(Lc.length, i + win); j++) { const v = Math.max(Math.abs(Lc[j]), Math.abs(Rc[j])); p = Math.max(p, v); s += Lc[j] * Lc[j] + Rc[j] * Rc[j]; n += 2; }
+      peak = Math.max(peak, p);
+      rows.push([+(i / sr).toFixed(2), +(20 * Math.log10(p + 1e-9)).toFixed(1), +(10 * Math.log10(s / n + 1e-12)).toFixed(1)]);
+    }
+    return { peakDb: +(20 * Math.log10(peak)).toFixed(2), rows };
+  },
+};
+})();
+</script>
+</body>
+</html>
